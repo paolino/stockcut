@@ -1,108 +1,180 @@
 {-# language ScopedTypeVariables #-}
-import Control.Arrow (second , (***))
-import Data.Array (listArray, (!))
-import System.Random.Shuffle (shuffle', shuffleM)
-import System.Random (getStdGen,split, randomRIO)
-import Data.List (unfoldr)
-import Control.Monad (replicateM)
-import qualified Data.Heap as H
-
-type IBar a = [(Int,a)]
-type ISolution a = [IBar a]
+{-# language PackageImports, ConstraintKinds #-}
+{-# language RecursiveDo,NoMonomorphismRestriction,FlexibleContexts,TypeFamilies #-}
 
 
-shuffles xs = map (shuffle' <*> length $ xs) . unfoldr (Just . split ) <$> getStdGen
+module Main where
 
-using :: (Ord a, Num a) => IBar a -> [a]
-using = tail . scanl (\s (n,x) -> (s + x)) 0
+import Reflex.Dom
+import Reflex
+import Reflex.Dom.Class
+import Reflex.Host.Class -- (newEventWithTriggerRef)
+import Control.Concurrent.STM
+import Control.Concurrent
+import Control.Concurrent.STM
+import Control.Monad
+import Control.Monad.Trans
+import Control.Monad.Identity
+import Control.Monad.Ref 
+import Data.Dependent.Map as DMap 
+import Data.IORef
+import System.Random
+import Control.Lens
+import Data.List
 
-consume :: (Ord a , Num a) => a -> IBar a -> (IBar a, IBar a)
-consume t = (m *** m) . break ((> t) . snd) . (zip <*> using) where
-    m = map fst
+import Direct
 
-fill :: (Num a, Ord a) => a -> IBar a -> ISolution a
-fill t = takeWhile (not . null) . f where
-    f = uncurry (:) . second f . consume t 
-
-
-data Result a = Result {
-    bars :: Int,
-    bigrest :: a,
-    cuts :: ISolution a
-    } deriving Show
-newtype Mealy a = Mealy (ISolution a -> (Maybe (Result a), Mealy a))
-
-best :: (Ord a, Num a) => a -> Mealy a
-best t = let
-    r m mn = Mealy $ \xs -> let 
-        l = length xs
-        s = maximum $ map ((t -) . sum . map snd) xs
-        in case mn of
-            Just n -> if l < n || l == n && s > m 
-                then (Just $ Result l s xs, r s $ Just l) else (Nothing, r m mn)
-            Nothing -> (Just $ Result l s xs, r s $ Just l)
-    in r 0 Nothing
-  
-solve :: Mealy a -> [ISolution a] -> [Result a]
-solve (Mealy b) (x:xs) = let (r,b') = b x 
-            in  maybe id (:) r $ solve b' xs
-
-
-
-val :: (Fractional a) => a -> a -> [a] -> a
-val d t xs = 1/ (fromIntegral $ length xs) / (d + t - sum xs)
-
-type HH b a  = H.Heap (H.Entry b (IBar a))
-
-insertBar :: (Ord b, Fractional b) =>  (a -> b) -> a -> a -> IBar a -> HH b a  -> HH b a
-insertBar f d t xs = H.insert (H.Entry (val (f d) (f t) $ map (f . snd) xs) xs)
-
-limit :: Int -> HH b a -> HH b a
-limit n h 
-    | H.size h > n = H.take (n `div` 2) $ H.nub h
-    | otherwise = h
-
-data Fact a = Fact {
-    barLength :: a,
-    tol :: a,
-    pool :: Int
-    }
-
-
-update :: (Ord b, Fractional b) => (a -> b) -> Fact a -> ISolution a -> HH b a -> HH b a
-update f (Fact t d n) xs h = limit n . foldr (insertBar f t d) h $ xs
-
-
-clean :: IBar a -> IBar a
-clean ((x,a):xs) = (x,a) : clean (filter ((/= x) . fst) xs)
-clean [] = []
-
-correct :: Int -> IBar a -> IBar a
-correct n = take n . clean
-
-pick :: IBar a -> Int -> HH b a -> IO (IBar a)
-pick all n h = do 
-    xs <- shuffleM $ H.toUnsortedList h
-    as <- shuffleM all
-    return $ correct n $ (++ as) . concat $  map H.payload $  xs
-
-fact :: Fact Int
-fact = Fact 6000 10 500
-
-run as h (Mealy b) = do
-                x :: ISolution Int <- fill 6000 <$> pick as 50 h
-                let (r,b') = b x
-                case r of 
-                    Just y -> do
-                        putStrLn "**************"
-                        mapM_ print $ zip [1..] $ map (\x -> (x, 6000 - sum x)) . map (map snd) $ cuts y
-                    Nothing -> return ()
-                run as (update fromIntegral fact x h) b'
+main :: IO ()
 main = do
+    cell <- newTChanIO  -- new best  solution found from algo
+    count <- newTChanIO -- new solution produced from algo
+    reset <- newTChanIO -- reset population from interface
+    pause <- newTVarIO False -- pause flip flop
+    let     ncell = atomically . writeTChan cell 
+            ncount = atomically $ writeTChan count ()
+            nreset = atomically $ readTChan reset
+            npause = atomically $ readTVar pause
+    -- start algo
+    forkIO $ mainT ncell ncount nreset npause
+    -- start interface
+    mainWidget $ run cell count reset pause
+
+
+run :: MS m => TChan (Solution Int) -> TChan () -> TChan [Int] -> TVar Bool ->  m ()
+run c nc reset pause = do  
+    postGui <- askPostGui
+    runWithActions <- askRunWithActions
+    e <- newEventWithTrigger $ \et -> do
+        unsubscribe <- forkIO . forever $  do
+            x <- atomically (readTChan c) 
+            postGui $ runWithActions [et :=> Identity x]
+        return $ killThread unsubscribe
+    ec <- newEventWithTrigger $ \et -> do
+        resetc <- atomically $ dupTChan reset
+        unsubscribe <- forkIO $ do  
+            let turn i = do
+                    j <- atomically ((i <$ readTChan nc) `orElse` (0 <$ readTChan resetc)) 
+                    postGui $ runWithActions [et :=> Identity j]
+                    turn $ j + 1
+            turn (0 :: Int)
+        return $ killThread unsubscribe
     
-    ns :: IBar Int <- fmap (zip [0..]) . replicateM 150 $ randomRIO (300,3000) 
     
-    run ns H.empty  (best 6000)
-    
-    -- mapM print . map (\(Result x y _) -> (x,y)) $ solve (best 6000) x
-     
+    rand <- divClass "controls" $ do
+        e <- button "random"
+        r <- performEvent (randompop reset <$ e)
+        e <- button "pause"
+        performEvent_ (setpause pause <$ e)
+        e <- button "clean"
+        r0 <- performEvent (liftIO (atomically (writeTChan reset []) >> return []) <$ e)
+        elClass "span" "counter" $  holdDyn 0 ec >>= display
+        return (const <$> leftmost [r,r0])
+    divClass "algo" $ do
+        divClass "population" $ do
+            rec     ch :: ES ([Int] -> [Int]) <- domMorph population state
+                    state :: DS [Int] <- foldDyn ($) [] $ leftmost [ch,rand]
+                    performEvent_ (newpop reset <$> fst <$> attachDyn state ch)
+            return ()
+        divClass "bestdiv" $ 
+            holdDyn [] (leftmost [report <$> e, [] <$ rand]) >>= domMorph result
+    return ()
+
+result :: MS m => [([Int],Int)] -> m (ES ())
+result xs = do
+    divClass "title" $ text "Response"
+    elClass  "ol" "best" $ forM xs $ \(xs,s) ->
+        el "li" $ do 
+            elClass  "ol" "bestcuts" $ do 
+                forM xs $ \x ->
+                    el "li" $ do 
+                        text (show x)
+                        elClass "span" "plus" $ text "+"
+                elClass "li" "scarto" $ text (show s)
+    return never
+population :: MS m => [Int] -> m (ES ([Int] -> [Int]))
+population ns = do 
+    divClass "title" $ text "Request"
+    input <- textInput def
+    ninput <- textInput def
+    let 
+        value :: BS String = current . view textInput_value $ input
+        nvalue :: BS String = current . view textInput_value $ ninput
+        enter :: ES (String,String) = attach nvalue $ fst <$> attach value (leftmost [textInputGetEnter input, textInputGetEnter ninput])
+    elClass "ul" "pieces" $ forM (sort ns) $ \n -> 
+        elClass "li" "select" $ button (show n)
+    return ((\(n,x) -> (++ replicate (read n) (read x))) <$> enter)
+   
+newpop :: MonadIO m => TChan [Int] -> [Int] -> m ()
+newpop reset = liftIO . atomically . writeTChan reset 
+
+randompop :: MonadIO m => TChan [Int]  -> m [Int]
+randompop reset = liftIO $ do
+    ns <- replicateM 50 $ randomRIO (300,3000)
+    atomically $ writeTChan reset ns
+    return ns
+
+setpause :: MonadIO m => TVar Bool -> m ()
+setpause pause = liftIO $ do
+    atomically $ modifyTVar pause not
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-------  reflex missings --------------
+
+type Morph t m a = Dynamic t (m a) -> m (Event t a)
+
+mapMorph  :: (MonadHold t m, Reflex t) => Morph t m (Event t b) -> (a -> m (Event t b)) -> Dynamic t a -> m (Event t b)
+mapMorph dyn f d = mapDyn f d >>= dyn >>= joinE
+
+joinE :: (Reflex t, MonadHold t f) => Event t (Event t a) -> f (Event t a)
+joinE = fmap switch . hold never
+
+pick :: (GCompare k, Reflex t) => k a -> Event t (DMap k Identity) -> Event t a
+pick x r = select (fan r) x -- shouldn't we share fan r ?
+
+gateWith f = attachWithMaybe $ \allow a -> if f allow then Just a else Nothing
+
+pair x = leftmost . (: [x])
+--------- buggy namings, wait for Dynamic functor instance ---------------
+
+combineDynWith = Reflex.combineDyn
+combineDyn = combineDynWith (,)
+
+------------- Spider synonims
+
+type ES = Event Spider
+type DS = Dynamic Spider
+type BS = Behavior Spider
+
+-------------- Dom + spider synonyms
+
+type MS = MonadWidget Spider
+type Plug a = ES (DMap a Identity)
+
+-- specialized mapMorph for the Dom host 
+domMorph ::     MonadWidget t m 
+                => (a -> m (Event t b))  -- widget rewriter
+                -> Dynamic t a           -- driver for rewritings
+                -> m (Event t b)         -- signal the happened rewriting
+domMorph = mapMorph dyn
+
+ifDomMorph b f = domMorph h b where
+    h True = f
+    h _ = return never
+
+
+-------------- create a Plug ----------
+mergeDSums :: GCompare a => [DSum a ES] -> Plug a
+mergeDSums = merge . DMap.fromList
