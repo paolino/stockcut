@@ -1,0 +1,137 @@
+body {
+   font-size:0.85em;
+   background-color: #ddf;
+}
+div {
+   border-radius:0.2em;
+   margin:0.2em;
+   background-color: transparent;
+   border:1px solid #ccc;
+}
+button{
+   padding:0.3em;
+   margin:0.1em;
+   background-color: transparent;
+   border:1px solid #bbb;
+   border-radius:0.2em;
+   color:#111;
+   font-family:  bold;
+   font-size:1em;
+}
+button:hover{
+   background-color: #faa
+}
+
+.bestcuts li {
+  display:inline;
+  margin:0;
+  }
+.scarto {
+   color:red;
+   font-size:0.8em;
+   }
+.counter{
+   background-color:#ddd;
+   position:fixed;
+   right:1em;
+   top:0.5em;
+   color:blue;
+   margin:0.2em;
+   font-style:oblique;
+   padding:0.5em;
+   border-radius:0.2em;
+   border:gray solid 1px;
+   opacity: 0.9;
+}
+.counter button{
+   margin-right:0.5em;
+   background-color:#b99;
+}
+.population {
+   background-color: lightgray
+}
+.raw {
+   background-color: lightgreen;
+      color:gray;
+   
+}
+.bestdiv {
+   background-color: lightblue
+}
+.bestcuts{
+   padding-left:0.3em;
+   font-size:0.9em;
+   
+}
+.store ol {
+   list-style-type: none;
+   padding:0.2em;
+}
+.population ul {
+   list-style-type: none;
+   padding:0.2em;
+}
+.store li {
+   display:inline-flex;
+   width:4em;
+   justify-content:center;
+}
+.population li {
+   display:inline-flex;
+   width:4em;
+   justify-content:center;
+}
+.select button{
+   width:4em;
+}
+.algo {
+   display:block;
+}
+.plus {
+   color:gray;
+   font-size:0.7em;
+   padding:0.2em;
+}
+.locked{
+   color:red;
+   font-size:0.7em;
+   padding:0.2em;
+}
+ol .bestcuts {
+   display:inline;
+}
+
+.stock {
+ background-color: transparent;
+
+}
+.store {
+ background-color: transparent;
+
+}
+.title {background-color: transparent;
+
+   color:blue;
+   font-size:1.2em;
+   text-align: left;
+   }
+.input {
+   display:inline-block;
+   background-color: lightslategrey;
+}
+.error {
+     color:white;
+     background-color: red;
+
+}
+.stock {
+   display:inline;
+   
+}
+.controls {
+     background-color: transparent;
+     border:0;
+}
+input {
+   width:5em;
+}
